@@ -1,0 +1,20 @@
+<beans>
+
+    <bean id="mailService" class="com.dzytsiuk.ioc.service.MailService">
+        <property name="protocol" value="POP3"/>
+        <property name="port" value="3000"/>
+    </bean>
+
+    <bean id="paymentService" class="com.dzytsiuk.ioc.service.PaymentService">
+        <property name="mailService" ref="mailService"/>
+    </bean>
+
+    <bean id="paymentWithMaxService" class="com.dzytsiuk.ioc.service.PaymentService">
+        <property name="mailService" ref="mailService"/>
+        <property name="maxAmount" value="500"/>
+    </bean>
+
+    <bean id="userService" class="com.dzytsiuk.ioc.service.UserService">
+        <property name="mailService" ref="mailService"/>
+    </bean>
+</beans>

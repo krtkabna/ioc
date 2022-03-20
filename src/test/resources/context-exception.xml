@@ -1,0 +1,4 @@
+<bean id="mailService2" class="com.dzytsiuk.ioc.service.MailService">
+    <property name="protocol" value="SMTP"/>
+    <property name="port" value="8000"/>
+</bean>

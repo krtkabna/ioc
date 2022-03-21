@@ -7,4 +7,7 @@ public class BeanInstantiationException extends RuntimeException {
         super(message, cause);
     }
 
+    public BeanInstantiationException(String message) {
+        super(message);
+    }
 }

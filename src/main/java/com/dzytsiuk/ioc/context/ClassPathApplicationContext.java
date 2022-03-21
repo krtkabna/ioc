@@ -1,14 +1,22 @@
 package com.dzytsiuk.ioc.context;
 
 
+import com.dzytsiuk.ioc.context.cast.JavaNumberTypeCast;
 import com.dzytsiuk.ioc.entity.Bean;
 import com.dzytsiuk.ioc.entity.BeanDefinition;
+import com.dzytsiuk.ioc.exception.BeanInstantiationException;
+import com.dzytsiuk.ioc.exception.BeanNotFoundException;
+import com.dzytsiuk.ioc.exception.MultipleBeansForClassException;
 import com.dzytsiuk.ioc.io.BeanDefinitionReader;
 import com.dzytsiuk.ioc.io.XMLBeanDefinitionReader;
-
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 public class ClassPathApplicationContext implements ApplicationContext {
     private static final String SETTER_PREFIX = "set";
@@ -36,17 +44,34 @@ public class ClassPathApplicationContext implements ApplicationContext {
 
     @Override
     public <T> T getBean(Class<T> clazz) {
-        return null;
+        List<Object> beanList = beans.values().stream()
+            .map(Bean::getValue)
+            .filter(Objects::nonNull)
+            .filter(bean -> clazz.equals(bean.getClass()))
+            .collect(Collectors.toList());
+        if (beanList.size() > 1) {
+            throw new MultipleBeansForClassException("More than one bean found for class " + clazz.getName());
+        }
+        return (T) beanList.get(0);
     }
 
     @Override
     public <T> T getBean(String name, Class<T> clazz) {
-        return null;
+        T bean = getBean(name);
+        if (!bean.getClass().isAssignableFrom(clazz)) {
+            throw new BeanInstantiationException("Could not instantiate bean of class " + clazz.getName());
+        }
+        return bean;
     }
 
     @Override
     public <T> T getBean(String name) {
-        return null;
+        Bean bean = beans.get(name);
+        if (bean != null) {
+            return (T) bean.getValue();
+        } else {
+            throw new BeanNotFoundException("Could not find bean by name: " + name);
+        }
     }
 
     @Override

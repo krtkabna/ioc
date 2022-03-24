@@ -1,11 +1,11 @@
 package com.dzytsiuk.ioc.context;
 
 
-import com.dzytsiuk.ioc.context.cast.JavaNumberTypeCast;
 import com.dzytsiuk.ioc.entity.Bean;
 import com.dzytsiuk.ioc.entity.BeanDefinition;
 import com.dzytsiuk.ioc.exception.BeanInstantiationException;
 import com.dzytsiuk.ioc.exception.BeanNotFoundException;
+import com.dzytsiuk.ioc.exception.DependencyInjectionException;
 import com.dzytsiuk.ioc.exception.MultipleBeansForClassException;
 import com.dzytsiuk.ioc.io.BeanDefinitionReader;
 import com.dzytsiuk.ioc.io.XMLBeanDefinitionReader;
@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+
+import static com.dzytsiuk.ioc.context.cast.JavaNumberTypeCast.castPrimitive;
 
 public class ClassPathApplicationContext implements ApplicationContext {
     private static final String SETTER_PREFIX = "set";
@@ -80,15 +82,57 @@ public class ClassPathApplicationContext implements ApplicationContext {
     }
 
     private void instantiateBeans(List<BeanDefinition> beanDefinitions) {
+        beanDefinitions.forEach(this::instantiateBean);
     }
 
 
-    private void injectValueDependencies(List<BeanDefinition> beanDefinitions) {
+    private void instantiateBean(BeanDefinition beanDefinition) {
+        try {
+            Class<?> clazz = Class.forName(beanDefinition.getBeanClassName());
+            String id = beanDefinition.getId();
+            beans.put(id, new Bean(id, clazz));
+        } catch (ClassNotFoundException e) {
+            throw new BeanInstantiationException(
+                "Could not find class for name: " + beanDefinition.getBeanClassName(), e);
+        }
+    }
 
+    private void injectValueDependencies(List<BeanDefinition> beanDefinitions) {
+        beanDefinitions.forEach(beanDefinition ->
+            injectDependencies(beanDefinition.getId(), beanDefinition.getDependencies()));
     }
 
     private void injectRefDependencies(List<BeanDefinition> beanDefinitions) {
+        beanDefinitions.forEach(beanDefinition ->
+            injectDependencies(beanDefinition.getId(), beanDefinition.getRefDependencies()));
+    }
 
+    private void injectDependencies(String beanDefinitionId, Map<String, String> dependencies) {
+        for (Map.Entry<String, String> property : dependencies.entrySet()) {
+            Object bean = beans.get(beanDefinitionId).getValue();
+            setFieldValues(bean, beanDefinitionId, property);
+        }
+    }
+
+    private void setFieldValues(Object bean, String beanDefinitionId, Map.Entry<String, String> property) {
+        String setterName = getSetterName(property.getKey());
+        for (Method method : bean.getClass().getDeclaredMethods()) {
+            if (setterName.equals(method.getName())) {
+                Parameter parameter = method.getParameters()[SETTER_PARAMETER_INDEX];
+                Class<?> parameterType = parameter.getType();
+                String propertyValue = property.getValue();
+                try {
+                    if (parameterType.isPrimitive()) {
+                        Object primitivePropertyValue = castPrimitive(propertyValue, parameterType);
+                        method.invoke(bean, primitivePropertyValue);
+                    } else {
+                        method.invoke(bean, propertyValue);
+                    }
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new DependencyInjectionException("Could not inject dependencies for " + beanDefinitionId, e);
+                }
+            }
+        }
     }
 
     private String getSetterName(String propertyName) {

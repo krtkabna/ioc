@@ -11,18 +11,16 @@ import com.dzytsiuk.ioc.io.BeanDefinitionReader;
 import com.dzytsiuk.ioc.io.XMLBeanDefinitionReader;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import static com.dzytsiuk.ioc.context.cast.JavaNumberTypeCast.castPrimitive;
 
 public class ClassPathApplicationContext implements ApplicationContext {
     private static final String SETTER_PREFIX = "set";
-    private static final int SETTER_PARAMETER_INDEX = 0;
 
     private Map<String, Bean> beans;
     private BeanDefinitionReader beanDefinitionReader;
@@ -48,8 +46,7 @@ public class ClassPathApplicationContext implements ApplicationContext {
     public <T> T getBean(Class<T> clazz) {
         List<Object> beanList = beans.values().stream()
             .map(Bean::getValue)
-            .filter(Objects::nonNull)
-            .filter(bean -> clazz.equals(bean.getClass()))
+            .filter(bean -> (bean != null) && clazz.equals(bean.getClass()))
             .collect(Collectors.toList());
         if (beanList.size() > 1) {
             throw new MultipleBeansForClassException("More than one bean found for class " + clazz.getName());
@@ -88,51 +85,62 @@ public class ClassPathApplicationContext implements ApplicationContext {
 
     private void instantiateBean(BeanDefinition beanDefinition) {
         try {
-            Class<?> clazz = Class.forName(beanDefinition.getBeanClassName());
+            Object object = Class.forName(beanDefinition.getBeanClassName()).getConstructor().newInstance();
             String id = beanDefinition.getId();
-            beans.put(id, new Bean(id, clazz));
+            beans.put(id, new Bean(id, object));
         } catch (ClassNotFoundException e) {
-            throw new BeanInstantiationException(
-                "Could not find class for name: " + beanDefinition.getBeanClassName(), e);
+            throw new BeanInstantiationException("Could not find class for name: " + beanDefinition.getBeanClassName(), e);
+        } catch (InvocationTargetException | InstantiationException | IllegalAccessException | NoSuchMethodException e) {
+            throw new BeanInstantiationException("Could not instantiate bean", e);
         }
     }
 
     private void injectValueDependencies(List<BeanDefinition> beanDefinitions) {
-        beanDefinitions.forEach(beanDefinition ->
-            injectDependencies(beanDefinition.getId(), beanDefinition.getDependencies()));
+        beanDefinitions.forEach(this::injectValueDependencies);
     }
 
     private void injectRefDependencies(List<BeanDefinition> beanDefinitions) {
-        beanDefinitions.forEach(beanDefinition ->
-            injectDependencies(beanDefinition.getId(), beanDefinition.getRefDependencies()));
+        beanDefinitions.forEach(this::injectRefDependencies);
     }
 
-    private void injectDependencies(String beanDefinitionId, Map<String, String> dependencies) {
-        for (Map.Entry<String, String> property : dependencies.entrySet()) {
-            Object bean = beans.get(beanDefinitionId).getValue();
-            setFieldValues(bean, beanDefinitionId, property);
+    private void injectValueDependencies(BeanDefinition beanDefinition) {
+        Bean bean = beans.get(beanDefinition.getId());
+        Map<String, String> dependencies = beanDefinition.getDependencies();
+        injectDependencies(dependencies, bean);
+    }
+
+    private void injectRefDependencies(BeanDefinition beanDefinition) {
+        Bean bean = beans.get(beanDefinition.getId());
+        Map<String, String> refDependencies = beanDefinition.getRefDependencies();
+        injectDependencies(refDependencies, bean);
+    }
+
+    private void injectDependencies(Map<String, String> dependencies, Bean bean) {
+        if (dependencies != null) {
+            dependencies
+                .forEach(processDependency(bean));
         }
     }
 
-    private void setFieldValues(Object bean, String beanDefinitionId, Map.Entry<String, String> property) {
-        String setterName = getSetterName(property.getKey());
-        for (Method method : bean.getClass().getDeclaredMethods()) {
-            if (setterName.equals(method.getName())) {
-                Parameter parameter = method.getParameters()[SETTER_PARAMETER_INDEX];
-                Class<?> parameterType = parameter.getType();
-                String propertyValue = property.getValue();
-                try {
-                    if (parameterType.isPrimitive()) {
-                        Object primitivePropertyValue = castPrimitive(propertyValue, parameterType);
-                        method.invoke(bean, primitivePropertyValue);
-                    } else {
-                        method.invoke(bean, propertyValue);
-                    }
-                } catch (IllegalAccessException | InvocationTargetException e) {
-                    throw new DependencyInjectionException("Could not inject dependencies for " + beanDefinitionId, e);
-                }
+    private BiConsumer<String, String> processDependency(Bean bean) {
+        return (key, value) -> {
+            try {
+                Object beanValue = bean.getValue();
+                Class<?> clazz = beanValue.getClass();
+                Class<?> type = clazz.getDeclaredField(key).getType();
+                Object valueObject = type.isPrimitive()
+                    ? castPrimitive(value, type)
+                    : isString(type) ? value : getBean(key);
+                Method method = clazz.getMethod(getSetterName(key), type);
+                method.invoke(beanValue, valueObject);
+            } catch (NoSuchFieldException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+                throw new DependencyInjectionException("Could not inject value dependencies for bean " + bean.getId(), e);
             }
-        }
+        };
+    }
+
+    private boolean isString(Class<?> type) {
+        return String.class.isAssignableFrom(type);
     }
 
     private String getSetterName(String propertyName) {
